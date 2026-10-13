@@ -38,7 +38,7 @@
 
 **More**
 - Windows, macOS and Linux
-- ~10MB of memory, no telemetry, free and open source
+- No telemetry, free and open source
 - 26 interface languages
 
 ## Download
