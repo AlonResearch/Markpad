@@ -608,16 +608,16 @@ fn remembered_window_labels_in(config: &Path) -> Vec<String> {
 
 /// Persists the calling window's restore snapshot atomically.
 ///
-/// This runs while the last window is closing — the moment the WebKit storage
-/// process is already tearing down — so a partial write is a realistic
-/// outcome, not a theoretical one. `fs::write` truncates first and then
-/// streams, so a crash mid-write leaves behind half a JSON document, and the
-/// next launch restores no tabs at all. `atomic_write` publishes the new
+/// This runs as the window changes and while it closes, when the WebKit
+/// storage process may already be tearing down, so a partial write is a
+/// realistic outcome, not a theoretical one. `fs::write` truncates first and
+/// then streams, so a crash mid-write leaves behind half a JSON document, and
+/// the next launch restores no tabs at all. `atomic_write` publishes the new
 /// snapshot with a rename: the file on disk is either entirely the old
 /// session or entirely the new one.
 ///
-/// Off the main thread: the two fsyncs cost ~8 ms, and closing main freezes
-/// every other window for that long. The caller still awaits the write.
+/// Off the main thread: the two fsyncs cost ~8 ms, and on it every window
+/// freezes for that long. The caller still awaits the write.
 #[tauri::command]
 pub async fn save_window_state(
     window: tauri::Window,
@@ -1120,14 +1120,14 @@ fn build_viewer_window(app: &AppHandle, label: &str) -> Result<(), String> {
 /// VS Code, Vim, JetBrains and Emacs — saves by writing a temp file alongside
 /// and renaming it over the top. That leaves a new inode at the same path, so
 /// the watch was left holding the unlinked old one: after the first save, its
-/// own or anyone else's, Live Mode on Linux reported nothing for the rest of
+/// own or anyone else's, the watcher on Linux reported nothing for the rest of
 /// the session, and the callback swallowed the error that said so.
 /// `watch_survives_rename` below is that failure, pinned per platform.
 ///
 /// A directory watch has no such problem, because the directory is the thing
 /// whose entries changed. The cost is hearing about every sibling file, which
 /// `event_concerns` drops on a name comparison — cheaper than the emit it
-/// replaces, and paid only while Live Mode is on.
+/// replaces.
 ///
 /// Falls back to the target itself when there is no usable parent (a bare
 /// relative filename, or a filesystem root), which keeps the previous
@@ -2274,8 +2274,8 @@ mod tests {
 /// it is what one Markpad save does to its own watch, and what most editors do
 /// to it (VS Code, Vim, JetBrains, Emacs all rename on save).
 ///
-/// If this fails on a platform, Live Mode there stops reporting anything after
-/// the first save, silently and for the rest of the session.
+/// If this fails on a platform, the watcher there stops reporting anything
+/// after the first save, silently and for the rest of the session.
 #[cfg(test)]
 mod watch_targeting {
     use super::{event_concerns, watch_root};
