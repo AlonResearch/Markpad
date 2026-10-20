@@ -121,6 +121,10 @@ const en: Translation = {
         previewNewlineBreaks: 'Every Newline Breaks the Line',
         previewNewlineBreaksHint: 'Off: a newline is a space, two trailing spaces break the line',
         showTabs: 'Show Tab Bar',
+        tabPosition: 'Tab Position',
+        tabPositionTop: 'Top',
+        tabPositionLeft: 'Left Column',
+        tabPositionRight: 'Right Column',
         restoreStateOnReopen: 'Reopen Previous Tabs',
         closeWindowWithLastTab: 'Close Window with Last Tab',
         openFileMode: 'Open existing files in',
@@ -451,7 +455,8 @@ const en: Translation = {
     },
     tabs: {
         untitled: 'Untitled',
-        home: 'Home'
+        home: 'Home',
+        resizeColumn: 'Resize tab column'
     },
     common: {
         close: 'Close',
