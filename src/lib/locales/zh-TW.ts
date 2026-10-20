@@ -15,6 +15,8 @@ export default {
         toolbarsSettings: '工具列設定',
         fileSettings: '檔案設定',
         autoSave: '自動儲存編輯內容',
+        persistOpenEditors: '關閉時保留未儲存的變更',
+        persistOpenEditorsHint: '結束或關閉最後一個視窗時保留未儲存的變更和未命名文件，下次開啟 Markpad 時還原；關閉其他視窗時仍會詢問。',
         settingsFile: '設定檔',
         importSettings: '匯入…',
         exportSettings: '匯出…',
@@ -249,6 +251,7 @@ export default {
         wholeWord: '比對完整單字'
     },
     toast: {
+        recoveryFailed: '無法保留未儲存的變更。',
         imageSavedSuccessfully: '圖片已成功儲存',
         failedToSaveImage: '圖片儲存失敗',
         diagramSavedAsSVG: '圖表已儲存為 SVG',

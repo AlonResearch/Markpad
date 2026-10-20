@@ -79,6 +79,8 @@ export default {
         files: 'Fișiere',
         fileSettings: 'Setări fișiere',
         autoSave: 'Salvare automată a modificărilor',
+        persistOpenEditors: 'Păstrează modificările nesalvate la închidere',
+        persistOpenEditorsHint: 'Ieșirea sau închiderea ultimei ferestre păstrează modificările nesalvate și documentele fără titlu în loc să ceară salvarea. Acestea revin la următoarea deschidere a Markpad. Închiderea uneia dintre mai multe ferestre întreabă în continuare.',
         toolbarPlacement: 'Poziția barei',
         toolbarOnBar: 'Bară',
         toolbarInMenu: 'Meniu',
@@ -194,6 +196,7 @@ export default {
         wordWrapColumn: 'Coloană'
     },
     toast: {
+        recoveryFailed: 'Nu s-au putut păstra modificările nesalvate.',
         imageSavedSuccessfully: 'Imagine salvată cu succes',
         failedToSaveImage: 'Eșec la salvarea imaginii',
         diagramSavedAsSVG: 'Diagramă salvată ca SVG',

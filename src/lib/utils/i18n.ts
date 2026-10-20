@@ -83,6 +83,8 @@ const en: Translation = {
         toolbarsSettings: 'Toolbar Settings',
         fileSettings: 'File Settings',
         autoSave: 'Auto-save edits',
+        persistOpenEditors: 'Keep unsaved changes on close',
+        persistOpenEditorsHint: 'Quitting or closing the last window keeps unsaved changes and untitled documents instead of asking to save. They come back the next time Markpad opens. Closing one of several windows still asks.',
         settingsFile: 'Settings file',
         importSettings: 'Import…',
         exportSettings: 'Export…',
@@ -317,6 +319,7 @@ const en: Translation = {
         wholeWord: 'Match whole word'
     },
     toast: {
+        recoveryFailed: 'Could not keep unsaved changes.',
         imageSavedSuccessfully: 'Image saved successfully',
         failedToSaveImage: 'Failed to save image',
         diagramSavedAsSVG: 'Diagram saved as SVG',

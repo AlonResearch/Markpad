@@ -80,6 +80,8 @@ export default {
         files: 'ファイル',
         fileSettings: 'ファイル設定',
         autoSave: '編集を自動保存',
+        persistOpenEditors: '閉じるときに未保存の変更を保持',
+        persistOpenEditorsHint: '終了するときや最後のウィンドウを閉じるとき、保存の確認を表示せずに未保存の変更と名前なしのドキュメントを保持します。次に Markpad を開いたときに復元されます。複数のウィンドウの 1 つを閉じるときは引き続き確認します。',
         toolbarPlacement: 'ツールバーの配置',
         toolbarOnBar: 'バー',
         toolbarInMenu: 'メニュー',
@@ -195,6 +197,7 @@ export default {
         wordWrapColumn: '列'
     },
     toast: {
+        recoveryFailed: '未保存の変更を保持できませんでした。',
         imageSavedSuccessfully: '画像の保存に成功しました',
         failedToSaveImage: '画像の保存に失敗しました',
         diagramSavedAsSVG: '図がSVGとして保存されました',

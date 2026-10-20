@@ -79,6 +79,8 @@ export default {
         files: 'Fichiers',
         fileSettings: 'Paramètres des fichiers',
         autoSave: 'Enregistrement automatique des modifications',
+        persistOpenEditors: 'Conserver les modifications non enregistrées à la fermeture',
+        persistOpenEditorsHint: 'Quitter Markpad ou fermer la dernière fenêtre conserve les modifications non enregistrées et les documents sans titre au lieu de demander d’enregistrer. Ils reviennent à la prochaine ouverture de Markpad. Fermer l’une de plusieurs fenêtres demande toujours.',
         toolbarPlacement: 'Emplacement de la barre',
         toolbarOnBar: 'Barre',
         toolbarInMenu: 'Menu',
@@ -194,6 +196,7 @@ export default {
         wordWrapColumn: 'Colonne'
     },
     toast: {
+        recoveryFailed: 'Impossible de conserver les modifications non enregistrées.',
         imageSavedSuccessfully: 'Image enregistrée avec succès',
         failedToSaveImage: 'Échec de l\'enregistrement de l\'image',
         diagramSavedAsSVG: 'Diagramme enregistré en SVG',
