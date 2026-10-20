@@ -46,18 +46,23 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             window_runtime::handle_single_instance(app, args, cwd);
         }))
+        // After single-instance, which ends a second launch in its setup, and
+        // before window-state reads its file: adoption moves files, geometry
+        // included, and only the instance that stays may touch them.
+        .plugin(
+            tauri::plugin::Builder::<_, ()>::new("launch-session")
+                .setup(|app, _| {
+                    window_runtime::adopt_remembered_window(app);
+                    Ok(())
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_prevent_default::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::SIZE
-                        | tauri_plugin_window_state::StateFlags::POSITION
-                        | tauri_plugin_window_state::StateFlags::MAXIMIZED
-                        | tauri_plugin_window_state::StateFlags::VISIBLE
-                        | tauri_plugin_window_state::StateFlags::FULLSCREEN,
-                )
+                .with_state_flags(window_runtime::geometry_flags())
                 // No `map_label`: a secondary window keeps its label across
                 // relaunches, so each one gets its own size and position back.
                 // ponytail: entries of windows that never come back stay in
@@ -66,13 +71,12 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            app.manage(window_runtime::GeometrySaver::new(app.handle().clone()));
             let args: Vec<String> = std::env::args().collect();
-
-            let label = "main";
 
             let mut window_builder = tauri::WebviewWindowBuilder::new(
                 app,
-                label,
+                window_runtime::LAUNCH_LABEL,
                 tauri::WebviewUrl::App("index.html".into()),
             )
             .title("Markpad")
@@ -208,7 +212,7 @@ pub fn run() {
             window_runtime::forget_window_state,
             window_runtime::reopen_remembered_windows,
             window_runtime::save_unsaved_recovery,
-            window_runtime::load_unsaved_recovery,
+            window_runtime::claim_unsaved_recovery,
             window_runtime::clear_unsaved_recovery,
             window_runtime::set_quitting,
             window_runtime::keeps_unsaved_on_close,
@@ -224,15 +228,10 @@ pub fn run() {
             if let tauri::RunEvent::Opened { urls } = _event {
                 for url in urls {
                     if let Ok(path_buf) = url.to_file_path() {
-                        let path_str = path_buf.to_string_lossy().to_string();
-
-                        let state = _app_handle.state::<AppState>();
-                        window_runtime::lock_recover(&state.startup_files).push(path_str.clone());
-
-                        if let Some(window) = window_runtime::pick_delivery_window(_app_handle) {
-                            let _ = _app_handle.emit_to(window.label(), "file-path", path_str);
-                            window_runtime::bring_to_front(&window);
-                        }
+                        window_runtime::deliver_opened_path(
+                            _app_handle,
+                            path_buf.to_string_lossy().to_string(),
+                        );
                     }
                 }
             }

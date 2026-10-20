@@ -10,7 +10,7 @@
 	import Settings from './components/Settings.svelte';
 	import TitleBar from './components/TitleBar.svelte';
 	import Sidebar from './components/Sidebar.svelte';
-	import { folderManager, type FolderEntry } from './stores/folder.svelte.js';
+	import { folderManager, snapshotFolder, type FolderEntry } from './stores/folder.svelte.js';
 	import DiffOverlay from './components/DiffOverlay.svelte';
 	import Editor from './components/Editor.svelte';
 	import EditorToolbar from './components/EditorToolbar.svelte';
@@ -128,7 +128,7 @@ import { t } from './utils/i18n.js';
 import { formatChord, modifierFor, opensInNewTab } from './utils/shortcuts.js';
 import { jumpScrollBehavior } from './utils/motion.js';
 import { createWindowSession } from './sessions/windowSession.svelte.js';
-import { claimableRecords, createUnsavedRecovery, restoreRecords, recoverySnapshot } from './sessions/unsavedRecovery.js';
+import { createBoundedWriter, restoreRecords, recoverySnapshot } from './sessions/unsavedRecovery.js';
 import { createDocumentSession, type LoadMarkdownOptions } from './sessions/documentSession.svelte.js';
 
 	import 'highlight.js/styles/github-dark.css';
@@ -651,9 +651,8 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 	const RESTORE_IN_PROGRESS_KEY = 'markpad-window-restore-in-progress';
 
 	// Each window persists and restores its own snapshot, keyed by its label.
-	// Main always opens and reopens the other windows of the last session
-	// under the labels they had.
-	const isMainWindow = appWindow.label === 'main';
+	// Windows are equal: whichever starts first reopens the others of the last
+	// session under the labels they had.
 	let recoveryReady = $state(false);
 	let recoveryErrorShown = false;
 	function reportRecoveryError(error: unknown) {
@@ -663,9 +662,10 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 			addToast(t('toast.recoveryFailed', settings.language), 'error');
 		}
 	}
-	const unsavedRecovery = createUnsavedRecovery({
+	const unsavedRecovery = createBoundedWriter({
 		write: (json) => invoke('save_unsaved_recovery', { json }),
 		onError: reportRecoveryError,
+		initial: '[]',
 	});
 	$effect(() => {
 		if (!recoveryReady) return;
@@ -676,15 +676,12 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 	});
 
 	// Startup, setting on. Without it nothing is read, written or removed.
-	// `reopened`: the windows main just rebuilt, which take their own backups
-	// and may not be in `list_viewer_windows` yet.
-	async function restoreUnsavedChanges(reopened: ReadonlySet<string>) {
+	// Rust hands over this window's own backup and any orphan no other window
+	// has taken (see `claim_unsaved_recovery`).
+	async function restoreUnsavedChanges() {
 		try {
-			const records = await invoke<Array<[string, string]>>('load_unsaved_recovery');
-			const windows = isMainWindow ? await invoke<Array<{ label: string }>>('list_viewer_windows') : [];
-			const owned = new Set([...reopened, ...windows.map((win) => win.label)].filter((label) => label !== appWindow.label));
-			const claimable = claimableRecords(records, appWindow.label, isMainWindow, owned);
-			const consumed = restoreRecords(tabManager, claimable, appWindow.label, reportRecoveryError);
+			const records = await invoke<Array<[string, string]>>('claim_unsaved_recovery');
+			const consumed = restoreRecords(tabManager, records, appWindow.label, reportRecoveryError);
 			// Publish the new owner before removing stale window copies.
 			await invoke('save_unsaved_recovery', { json: recoverySnapshot(tabManager.tabs) });
 			await invoke('clear_unsaved_recovery', { labels: consumed });
@@ -719,8 +716,12 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 		return true;
 	}
 
+	// The snapshot: window shape only, never document content. `folderRoot`
+	// rides along so each window gets its own folder back.
+	const windowStateJson = () => tabManager.serializeState({ folderRoot: folderManager.root });
+	let restoredFolder: string | null = null;
+
 	const windowSession = createWindowSession({
-		isMainWindow,
 		windowStateKey: WINDOW_STATE_KEY,
 		legacyStateKey: LEGACY_STATE_KEY,
 		restoreInProgressKey: RESTORE_IN_PROGRESS_KEY,
@@ -730,11 +731,14 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 			// edited would be persisted at the position it held when the editor
 			// last came down. Only the active tab can be the one the editor holds.
 			if (tabManager.activeTabId) editorPane?.flushPositionTo(tabManager.activeTabId);
-			return tabManager.serializeState();
+			return windowStateJson();
 		},
 		shouldRestoreState: () => settings.restoreStateOnReopen,
 		isDisposed: () => isDisposed,
-		restoreState: (json) => tabManager.restoreState(json),
+		restoreState: (json) => {
+			tabManager.restoreState(json);
+			restoredFolder = snapshotFolder(json);
+		},
 		restoredTabs: () => tabManager.tabs.map((tab) => ({ id: tab.id, path: tab.path })),
 		applyRestoredContent: async (tabId, raw) => {
 			const tab = tabManager.tabs.find((item) => item.id === tabId);
@@ -847,6 +851,23 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 					: t('toast.restoreInterrupted', settings.language),
 				'warning',
 			),
+	});
+
+	// The session is recorded as it changes, so a crash or kill brings this
+	// window back as it was. Tracks the window's shape only: which tabs, in
+	// what order, which is active, how each is viewed, the tag and the folder.
+	// Scroll and editor position are not tracked, so scrolling writes nothing;
+	// they are written with the next tracked change and at every checkpoint
+	// (focus loss, hide, close, quit).
+	$effect(() => {
+		for (const tab of tabManager.tabs) {
+			void [tab.id, tab.path, tab.title, tab.isEditing, tab.isSplit, tab.splitRatio, tab.isScrollSynced];
+		}
+		const tag = tabManager.windowTag;
+		void [tabManager.activeTabId, tag?.name, tag?.color, tag?.pinned, folderManager.root];
+		// Not `serializeState`: its editor flush is only sound when no tab
+		// switch is under way, and this runs on one.
+		windowSession.record(untrack(windowStateJson));
 	});
 
 	$effect(() => {
@@ -991,7 +1012,7 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 	}
 
 	/**
-	 * The save/discard close, used when "Keep unsaved changes on close" is off, when
+	 * The save/discard close, used when "Restore unsaved changes on launch" is off, when
 	 * closing one of several windows, or when the backup cannot be written
 	 * (`keepUnsavedForExit` runs first otherwise).
 	 * Resolve this window's unsaved tabs, then write the restore snapshot: the
@@ -3819,6 +3840,7 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 				unlisteners.push(
 					await appWindow.onFocusChanged(({ payload: focused }) => {
 						isFocused = focused;
+						if (!focused) windowSession.checkpoint();
 					}),
 				);
 				isFocused = await appWindow.isFocused();
@@ -3826,18 +3848,13 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 
 			const restoredOwnState = await windowSession.restore();
 			if (isDisposed) return;
-			// The first window reopens the last folder; windows opened later start without one.
-			if (appWindow.label === 'main') void folderManager.restore();
-			// After main's own restore, which discards every snapshot when restore is off.
-			const reopened = new Set(
-				isMainWindow && settings.restoreStateOnReopen
-					? await invoke<string[]>('reopen_remembered_windows').catch((error) => {
-							console.error('Failed to reopen windows', error);
-							return [];
-						})
-					: [],
-			);
-			if (settings.persistOpenEditors) await restoreUnsavedChanges(reopened);
+			void folderManager.restore(restoredFolder);
+			// After this window's own restore, which discards every snapshot when
+			// restore is off. Only the first window of a launch reopens anything.
+			if (settings.restoreStateOnReopen) {
+				await invoke('reopen_remembered_windows').catch((error) => console.error('Failed to reopen windows', error));
+			}
+			if (settings.persistOpenEditors) await restoreUnsavedChanges();
 			if (isDisposed) return;
 			// A reopened window's snapshot owns its tabs, a pinned one's included:
 			// opening the pinned group as well would open its files twice.
@@ -3862,6 +3879,11 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 				if (isDisposed) return;
 			}
 
+			const checkpointWhenHidden = () => {
+				if (document.visibilityState === 'hidden') windowSession.checkpoint();
+			};
+			document.addEventListener('visibilitychange', checkpointWhenHidden);
+			unlisteners.push(() => document.removeEventListener('visibilitychange', checkpointWhenHidden));
 			unlisteners.push(
 				await appWindow.listen('file-changed', async (event) => {
 					const changedPath = event.payload as string;
@@ -4061,19 +4083,16 @@ import { createDocumentSession, type LoadMarkdownOptions } from './sessions/docu
 				return;
 			}
 
-			// Startup-file delivery (argv / macOS Opened-before-ready stash) is
-			// a boot-time channel that belongs to the FIRST window only. It is
-			// process-global state: letting every window consume it meant each
-			// detached window re-opened the file the app was launched with.
-			if (isMainWindow) {
-				try {
-					const args: string[] = await invoke('send_markdown_path');
-					if (!isDisposed && args?.length > 0) {
-						for (const path of args) await loadMarkdown(path);
-					}
-				} catch (error) {
-					console.error('Error receiving Markdown file path:', error);
+			// Startup-file delivery (argv / macOS Opened-before-ready stash).
+			// Every window asks; Rust hands the launch's files out once, to the
+			// launch window, so a detached window never re-opens them.
+			try {
+				const args: string[] = await invoke('send_markdown_path');
+				if (!isDisposed && args?.length > 0) {
+					for (const path of args) await loadMarkdown(path);
 				}
+			} catch (error) {
+				console.error('Error receiving Markdown file path:', error);
 			}
 
 			if (!isDisposed) mode = 'app';

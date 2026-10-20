@@ -4,6 +4,7 @@ import { tabManager } from '../stores/tabs.svelte.js';
 import { isNewWindowLabel } from '../utils/pinnedTagWindow.js';
 import { hasRealFilePath } from '../utils/tabFileActions.js';
 import { validateTransferPayload, type TransferableTab } from '../utils/tabTransfer.js';
+import { createBoundedWriter } from './unsavedRecovery.js';
 
 type RestoredTab = {
 	id: string;
@@ -57,7 +58,6 @@ const MAX_DEFERRED = 8;
 const MAX_INTERRUPTIONS = 3;
 
 type WindowSessionOptions = {
-	isMainWindow: boolean;
 	windowStateKey: string;
 	legacyStateKey: string;
 	restoreInProgressKey: string;
@@ -87,10 +87,36 @@ type WindowSessionOptions = {
 export function createWindowSession(options: WindowSessionOptions) {
 	const appWindow = getCurrentWindow();
 
+	/**
+	 * The snapshot is written as the window changes, not only at close, so a
+	 * crash or kill brings every window back. Through the same bounded,
+	 * serialized writer as the unsaved backup: the last state wins, and a write
+	 * still in flight cannot land after the window is forgotten.
+	 */
+	const snapshots = createBoundedWriter({
+		write: (json) => invoke('save_window_state', { json }),
+		// A background write that fails retries on its own; only the one a
+		// close waits for is put in front of the user, by `persistState`.
+		onError: (error) => options.onWarning('Failed to save window state', error),
+	});
+	// Off until this window's own restore has run, so its empty starting state
+	// never replaces the snapshot it is about to read.
+	let recording = false;
+
+	/** Record the window's state within the writer's bounded delay. */
+	function record(json: string) {
+		if (recording && options.shouldRestoreState()) snapshots.update(json);
+	}
+
+	/** Record the full state, editor position included, at a moment no tab
+	 * switch is under way: focus loss or hide. */
+	function checkpoint() {
+		if (recording && options.shouldRestoreState()) snapshots.update(options.serializeState());
+	}
+
 	async function discardPersistedState() {
 		localStorage.removeItem(options.windowStateKey);
 		localStorage.removeItem(options.legacyStateKey);
-		if (!options.isMainWindow) return;
 		try {
 			await invoke('clear_window_state');
 		} catch (error) {
@@ -109,13 +135,14 @@ export function createWindowSession(options: WindowSessionOptions) {
 	 * `restoreInProgressKey` stays as a read-once migration path: a breadcrumb
 	 * an older build left behind is still honoured, and dropped as soon as a
 	 * Rust write succeeds. The Rust file wins when both exist, so a downgrade
-	 * and re-upgrade cannot resurrect a stale localStorage record. Only main
-	 * reads it: localStorage is shared by every window, and the record is main's.
+	 * and re-upgrade cannot resurrect a stale localStorage record. localStorage
+	 * is shared by every window: the first window to start, the launch window,
+	 * reads it and removes it before any other window exists.
 	 */
 	async function readProgress(): Promise<RestoreProgress | null> {
 		const raw =
 			((await invoke('load_restore_progress').catch(() => null)) as string | null) ??
-			(options.isMainWindow ? localStorage.getItem(options.restoreInProgressKey) : null);
+			localStorage.getItem(options.restoreInProgressKey);
 		if (!raw) return null;
 		try {
 			const data = JSON.parse(raw) as Partial<RestoreProgress> | null;
@@ -182,6 +209,7 @@ export function createWindowSession(options: WindowSessionOptions) {
 	 */
 	async function persistState(remember: boolean) {
 		if (!remember) {
+			await snapshots.dispose();
 			try {
 				await invoke('forget_window_state');
 			} catch (error) {
@@ -190,13 +218,12 @@ export function createWindowSession(options: WindowSessionOptions) {
 			return;
 		}
 		await releaseReadableDeferrals();
-		try {
-			await invoke('save_window_state', { json: options.serializeState() });
-			localStorage.removeItem(options.windowStateKey);
-			localStorage.removeItem(options.legacyStateKey);
-		} catch (error) {
-			options.onError('Failed to save window state on close', error);
+		if (!(await snapshots.flush(options.serializeState()))) {
+			options.onError('Failed to save window state on close', 'the write was refused');
+			return;
 		}
+		localStorage.removeItem(options.windowStateKey);
+		localStorage.removeItem(options.legacyStateKey);
 	}
 
 	/**
@@ -217,6 +244,9 @@ export function createWindowSession(options: WindowSessionOptions) {
 			// Nothing will be restored, so there is nothing for a breadcrumb to
 			// say about the next launch.
 			await writeProgress({ running: false, pending: null, deferred: [], interruptions: 0 });
+			// Writes nothing while the setting is off; turned on later, the
+			// window starts recording with its next change.
+			recording = true;
 			return false;
 		}
 		const previous = await readProgress();
@@ -259,11 +289,13 @@ export function createWindowSession(options: WindowSessionOptions) {
 		const progress: RestoreProgress = { running: true, pending: null, deferred, interruptions };
 		await writeProgress(progress);
 
-		// The localStorage copies are main's, from builds that kept one snapshot.
+		// The localStorage copies are from builds that kept one snapshot. The
+		// launch window starts first and removes them below, before it reopens
+		// any other window, so only it can read them.
 		const savedData =
-			(options.isMainWindow
-				? (localStorage.getItem(options.windowStateKey) ?? localStorage.getItem(options.legacyStateKey))
-				: null) ?? ((await invoke('load_window_state').catch(() => null)) as string | null);
+			localStorage.getItem(options.windowStateKey) ??
+			localStorage.getItem(options.legacyStateKey) ??
+			((await invoke('load_window_state').catch(() => null)) as string | null);
 		if (savedData) {
 			try {
 				options.restoreState(savedData);
@@ -325,11 +357,12 @@ export function createWindowSession(options: WindowSessionOptions) {
 			await writeProgress({ running: false, pending: null, deferred, interruptions: 0 });
 		}
 		if (options.isDisposed()) return Boolean(savedData);
-		if (options.restoredTabs().length > 0) await persistState(true);
-		if (options.isMainWindow) {
-			localStorage.removeItem(options.windowStateKey);
-			localStorage.removeItem(options.legacyStateKey);
-		}
+		// Every window has a snapshot from here on, an empty one included: the
+		// set of snapshots is the list of windows the next launch reopens.
+		recording = true;
+		await persistState(true);
+		localStorage.removeItem(options.windowStateKey);
+		localStorage.removeItem(options.legacyStateKey);
 		return Boolean(savedData);
 	}
 
@@ -455,5 +488,5 @@ export function createWindowSession(options: WindowSessionOptions) {
 		return transfer(tabId, (token) => invoke('create_transfer_window', { token }));
 	}
 
-	return { discardPersistedState, persistState, restore, claimTransferredTab, acceptOfferedTransfer, detach, transfer };
+	return { discardPersistedState, persistState, record, checkpoint, restore, claimTransferredTab, acceptOfferedTransfer, detach, transfer };
 }
