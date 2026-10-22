@@ -24,5 +24,10 @@ test('a second launch hands every argv path to the running window', () => {
 	// at `send_markdown_path`. Taking only the first path opened a.md alone.
 	const secondInstance = sliceBetween(runtime, 'pub fn handle_single_instance', 'fn create_transfer_window');
 	assert.match(secondInstance, /for path in startup_paths\(/);
+	// Windows Explorer's per-file launches must share the macOS pending-open
+	// implementation: emitting directly loses files before the listener exists.
+	assert.match(secondInstance, /deliver_opened_path\(app, path\)/);
+	assert.doesNotMatch(secondInstance, /emit_to|return;/);
+	assert.doesNotMatch(runtime, /#\[cfg\(target_os = "macos"\)\]\s*pub fn deliver_opened_path/);
 	assert.doesNotMatch(secondInstance, /\.next\(\)|\.first\(\)/);
 });

@@ -988,10 +988,9 @@ pub fn pick_delivery_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     windows.get(label).cloned()
 }
 
-/// A file macOS opened. Until the launch window has taken the launch's files it
+/// A file opened by the OS. Until the launch window has taken the launch's files it
 /// joins them, so it lands there and in no other window; after that it goes
 /// where `pick_delivery_window` says.
-#[cfg(target_os = "macos")]
 pub fn deliver_opened_path(app: &AppHandle, path: String) {
     let state = app.state::<AppState>();
     let target = {
@@ -1064,15 +1063,14 @@ pub fn startup_paths(args: &[String], cwd: &Path) -> Vec<String> {
 }
 
 pub fn handle_single_instance(app: &AppHandle, args: Vec<String>, cwd: String) {
-    let Some(window) = pick_delivery_window(app) else {
-        return;
-    };
-    // One event per path, the way `RunEvent::Opened` delivers a
-    // multi-file open on macOS: the `file-path` listener takes a single path.
+    // Explorer launches one process per selected file. Queue paths received
+    // before the launch window's listener is ready, just like macOS opens.
     for path in startup_paths(&args, Path::new(&cwd)) {
-        let _ = app.emit_to(window.label(), "file-path", path);
+        deliver_opened_path(app, path);
     }
-    bring_to_front(&window);
+    if let Some(window) = pick_delivery_window(app) {
+        bring_to_front(&window);
+    }
 }
 
 /// Creates the destination window for a tab transfer. Its label carries the
