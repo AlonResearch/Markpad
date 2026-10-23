@@ -1063,13 +1063,17 @@ pub fn startup_paths(args: &[String], cwd: &Path) -> Vec<String> {
 }
 
 pub fn handle_single_instance(app: &AppHandle, args: Vec<String>, cwd: String) {
-    // Explorer launches one process per selected file. Queue paths received
-    // before the launch window's listener is ready, just like macOS opens.
-    for path in startup_paths(&args, Path::new(&cwd)) {
-        deliver_opened_path(app, path);
+    // Explorer launches one process per selected file, so these can arrive
+    // before the launch window listens; `deliver_opened_path` queues them and
+    // fronts the window each one lands in.
+    let paths = startup_paths(&args, Path::new(&cwd));
+    if paths.is_empty() {
+        if let Some(window) = pick_delivery_window(app) {
+            bring_to_front(&window);
+        }
     }
-    if let Some(window) = pick_delivery_window(app) {
-        bring_to_front(&window);
+    for path in paths {
+        deliver_opened_path(app, path);
     }
 }
 
